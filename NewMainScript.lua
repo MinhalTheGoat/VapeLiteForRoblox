@@ -818,6 +818,13 @@ run(function()
 					AttackRemote = bedwars.Client:Get(bedwars.AttackRemote)
 				end)
 
+						if LegitAura.Enabled then
+			if (tick() - bedwars.SwordController.lastSwing) > 0.15 then return false end
+		end
+
+		return sword, meta
+	end								
+
 				Killaura = vapelite:CreateModule({
 					Name = 'Killaura',
 					Function = function(callback)
