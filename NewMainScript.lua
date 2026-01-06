@@ -289,7 +289,6 @@ run(function()
 
 			local AutoCharge
 			local AutoChargeTime
-			local Killaura
 			local Reach
 
 			local function getEntitiesNear(range)
