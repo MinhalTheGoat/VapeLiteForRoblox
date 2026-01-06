@@ -835,32 +835,34 @@ run(function()
 									local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
 									if angle > (math.rad(Angle.Value) / 2) then return end
 									if Moving.Enabled and entitylib.character.RootPart.Velocity.Magnitude < 3 then return end
+									local swingCooldown = 0
+									repeat
+																						
+								local actualRoot = v.Character.PrimaryPart
+								if actualRoot then
+									local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
+									local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
+									swingCooldown = tick()
+									bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+									store.attackReach = (delta.Magnitude * 100) // 1 / 100
+									store.attackReachUpdate = tick() + 1
 
-									local swingDelta = workspace:GetServerTimeNow() - bedwars.SwordController.lastSwingServerTime
-									local targetTime = AutoChargeTime.Value / 100
-									if delta.Magnitude < 14.4 and AutoCharge.Enabled and (os.clock() - chargeSwingTime) < targetTime then return end
-									canSwing = true
-									chargeSwingTime = os.clock()
-
-									if AutoCharge.Enabled then
-										canSwing = (os.clock() - chargeSwingTime) < targetTime or (os.clock() - animTime) < targetTime
-										if canSwing then
-											animTime = os.clock()
-										end
+									if delta.Magnitude < 14.4 and ChargeTime.Value > 0.11 then
+										AnimDelay = tick()
 									end
 
-									AttackRemote:SendToServer({
-										weapon = store.hand.tool,
+									AttackRemote:FireServer({
+										weapon = store.tool,
 										chargedAttack = {chargeRatio = 0},
-										lastSwingServerTimeDelta = swingDelta,
-										entityInstance = plr.Character,
+										lastSwingServerTimeDelta = 0.5,
+										entityInstance = v.Character,
 										validate = {
 											raycast = {
-												cameraPosition = {value = gameCamera.CFrame.Position},
-												cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, plr.RootPart.Position).LookVector}
+												cameraPosition = {value = pos},
+												cursorDirection = {value = dir}
 											},
-											targetPosition = {value = plr.RootPart.Position},
-											selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, plr.RootPart.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
+											targetPosition = {value = actualRoot.Position},
+											selfPosition = {value = pos}
 										}
 									})
 								end
