@@ -74,7 +74,7 @@ run(function()
 		end
 
 		function moduleapi:CreateSlider(s)
-			local api = {Type = 'Slider', Value = s.Default or s.Min, Min = s.Min, Max = s.Max, Index = getTableSize(moduleapi.Options), Object = {Visible = s.Visible ~= false}}
+			local api = {Type = 'Slider', Value = s.Default or s.Min, Min = s.Min, Max = s.Max, Decimal = s.Decimal or 1, Index = getTableSize(moduleapi.Options), Object = {Visible = s.Visible ~= false}}
 			s.Function = s.Function or function() end
 			function api:SetValue(v)
 				if tonumber(v) == math.huge or v ~= v then return end
@@ -230,7 +230,7 @@ run(function()
 			local newmodule = {name = i, desc = v.Tooltip, options = {}, toggled = v.Enabled}
 			for i2, v2 in v.Options do
 				if v2.Type == 'Slider' then
-					table.insert(newmodule.options, {name = i2, type = 'Slider', state = v2.Value, min = v2.Min, max = v2.Max, index = v2.Index, visible = v2.Object.Visible})
+					table.insert(newmodule.options, {name = i2, type = 'Slider', state = v2.Value, min = v2.Min, max = v2.Max, decimal = v2.Decimal or 1, index = v2.Index, visible = v2.Object.Visible})
 				elseif v2.Type == 'Dropdown' then
 					table.insert(newmodule.options, {name = i2, type = 'Dropdown', state = v2.Value, list = v2.List, index = v2.Index, visible = v2.Object.Visible})
 				elseif v2.Type == 'ColorSlider' then
