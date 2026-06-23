@@ -1743,6 +1743,7 @@ run(function()
     local AttackRange
     local ChargeTime
     local UpdateRate
+    local Angle
     local AnimDelay = tick()
     local AttackRemote = {FireServer = function() end}
     local kitChecks
@@ -1751,7 +1752,7 @@ run(function()
     local lastSwingServerTimeDelta = 0
     local Client = require(replicatedStorage.TS.remotes).default.Client
     task.spawn(function()
-        AttackRemote = Client:Get("SwordHit").instance
+        AttackRemote = Client:Get("SwordHit")
     end)
 
     local function getAttackData()
@@ -1814,31 +1815,32 @@ run(function()
 
                         if plr then
                             local v = plr
-                            switchItem(sword.tool, 0)
-                            local selfpos = entitylib.character.RootPart.Position
+                            local selfrootpos = entitylib.character.RootPart.Position
+                            local localfacing = entitylib.character.RootPart.CFrame.LookVector
+                            local delta = (v.RootPart.Position - selfrootpos)
 
-                            local pos, vis = gameCamera:WorldToViewportPoint(v.RootPart.Position)
-                            if not vis then
+                            -- grandad-style body-facing angle check (horizontal cone)
+                            local horiz = delta * Vector3.new(1, 0, 1)
+                            local angle = math.huge
+                            if horiz.Magnitude > 0.01 then
+                                angle = math.acos(math.clamp(localfacing:Dot(horiz.Unit), -1, 1))
+                            end
+                            if angle > (math.rad(Angle.Value) / 2) then
                                 task.wait(1 / UpdateRate.Value)
                                 continue
                             end
 
+                            -- wallcheck (kept; grandad's angle check has no built-in LOS)
                             if entitylib.Wallcheck(lplr.Character.HumanoidRootPart.Position, v.RootPart.Position) then
                                 task.wait(0.1)
                                 continue
                             end
-
-                            local delta = (v.RootPart.Position - selfpos)
 
                             if not Attacking then
                                 Attacking = true
                                 store.KillauraTarget = v
                             end
 
-                            if delta.Magnitude > AttackRange.Value then
-                                task.wait(1 / UpdateRate.Value)
-                                continue
-                            end
                             if (tick() - swingCooldown) < math.max(ChargeTime.Value, 0.02) then
                                 task.wait()
                                 continue
@@ -1846,28 +1848,26 @@ run(function()
 
                             local actualRoot = v.Character.PrimaryPart
                             if actualRoot then
-                                local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-                                local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
                                 swingCooldown = tick()
                                 local _serverNow = workspace:GetServerTimeNow()
                                 lastSwingServerTimeDelta = _serverNow - lastSwingServerTime
                                 lastSwingServerTime = _serverNow
                                 bedwars.SwordController.lastAttack = _serverNow
-                                store.attackReach = (delta.Magnitude * 100) // 1 / 100
-                                store.attackReachUpdate = tick() + 1
 
-                                AttackRemote:FireServer({
+                                -- SendToServer routes through the Reach wrapper, which applies
+                                -- the selfPosition extension (RAYCAST_SWORD_CHARACTER_DISTANCE) when Reach/HitBoxes is on.
+                                AttackRemote:SendToServer({
                                     weapon = sword.tool,
                                     chargedAttack = {chargeRatio = 0},
                                     lastSwingServerTimeDelta = math.clamp(lastSwingServerTimeDelta, 0.2, 0.8),
                                     entityInstance = v.Character,
                                     validate = {
                                         raycast = {
-                                            cameraPosition = {value = pos},
-                                            cursorDirection = {value = dir}
+                                            cameraPosition = {value = gameCamera.CFrame.Position},
+                                            cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, actualRoot.Position).LookVector}
                                         },
                                         targetPosition = {value = actualRoot.Position},
-                                        selfPosition = {value = pos}
+                                        selfPosition = {value = selfrootpos}
                                     }
                                 })
                             end
@@ -1892,6 +1892,9 @@ run(function()
     })
     UpdateRate = Killaura:CreateSlider({
         Name = 'Update rate', Min = 1, Max = 120, Default = 60, Suffix = 'hz'
+    })
+    Angle = Killaura:CreateSlider({
+        Name = 'Angle', Min = 10, Max = 360, Default = 100, Suffix = function(val) return val == 1 and 'degree' or 'degrees' end
     })
 
     kitChecks = {
