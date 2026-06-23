@@ -1854,8 +1854,12 @@ run(function()
                                 lastSwingServerTime = _serverNow
                                 bedwars.SwordController.lastAttack = _serverNow
 
-                                -- SendToServer routes through the Reach wrapper, which applies
-                                -- the selfPosition extension (RAYCAST_SWORD_CHARACTER_DISTANCE) when Reach/HitBoxes is on.
+                                -- grandad's selfPosition reach-bypass: report a position closer to
+                                -- the target so the server never sees a distance above ~14.4 studs,
+                                -- regardless of the real range. This makes Killaura reach the full
+                                -- Attack range slider value WITHOUT needing Reach enabled.
+                                -- (SendToServer's wrapper extension zeroes out on the already-clamped
+                                -- value, so no double-extension.)
                                 AttackRemote:SendToServer({
                                     weapon = sword.tool,
                                     chargedAttack = {chargeRatio = 0},
@@ -1867,9 +1871,12 @@ run(function()
                                             cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, actualRoot.Position).LookVector}
                                         },
                                         targetPosition = {value = actualRoot.Position},
-                                        selfPosition = {value = selfrootpos}
+                                        selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, actualRoot.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
                                     }
                                 })
+
+                                store.attackReach = (delta.Magnitude * 100) // 1 / 100
+                                store.attackReachUpdate = tick() + 1
                             end
                         end
                     end
