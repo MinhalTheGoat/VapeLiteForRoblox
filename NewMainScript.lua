@@ -1812,6 +1812,7 @@ run(function()
         -- Killaura reach the full Attack range slider value WITHOUT Reach enabled.
         AttackRemote:SendToServer({
             weapon = sword.tool,
+            chargedAttack = {chargeRatio = 0},
             lastSwingServerTimeDelta = math.clamp(lastSwingServerTimeDelta, 0.2, 0.8),
             entityInstance = v.Character,
             validate = {
