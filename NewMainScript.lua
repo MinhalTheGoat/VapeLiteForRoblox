@@ -459,19 +459,21 @@ end
 
 -- Closest-to-cursor target selector (replaces VapeV4 EntityMouse).
 -- Players-only (NPCs/entities filtered out), on-screen (camera visibility test,
--- no FOV, no wallcheck). Returns the entity nearest the mouse, or nil.
+-- no wallcheck). FOV limits targets to those within FOV pixels of the cursor.
+-- Returns the entity nearest the mouse within FOV, or nil.
 entitylib.EntityMouse = function(params)
 	if not entitylib.isAlive then return nil end
 	local mousePos = inputService:GetMouseLocation()
+	local fov = (params and params.FOV) or math.huge
 	local best, bestMag = nil, math.huge
-	local candidates = entitylib.AllPosition({ Range = (params and params.Range) or 999, Sort = sortmethods.Distance })
+	local candidates = entitylib.AllPosition({ Range = 9999, Sort = sortmethods.Distance })
 	for _, v in candidates do
 		-- players only: skip anything that isn't a real player (NPCs, mobs, entities)
 		if v.Player then
 			local screen, vis = gameCamera:WorldToViewportPoint(v.RootPart.Position)
 			if vis then
 				local mag = (Vector2.new(screen.X, screen.Y) - mousePos).Magnitude
-				if mag < bestMag then
+				if mag <= fov and mag < bestMag then
 					bestMag, best = mag, v
 				end
 			end
@@ -2855,7 +2857,7 @@ end)
 	run(function()
 		local ProjectileAimbot
 		local Prediction
-		local Smoothness
+		local FOV
 		local Vertical
 		local AutoCharge
 		local oldLaunch
@@ -2863,8 +2865,8 @@ end)
 		local function doAim(nextLaunch, ...)
 			local self, projmeta, worldmeta, origin, shootpos = ...
 
-			-- players-only, closest-to-cursor, on-screen selector (no FOV, no wallcheck)
-			local plr = entitylib.EntityMouse({ Part = 'RootPart' })
+			-- players-only, closest-to-cursor, on-screen within FOV (no wallcheck)
+			local plr = entitylib.EntityMouse({ Part = 'RootPart', FOV = FOV.Value })
 			if not plr or not plr.Character then return nextLaunch(...) end
 
 			-- arrows only: other projectiles permanently rejected (no toggle)
@@ -2930,11 +2932,11 @@ end)
 					ProjectileAimbot:Clean(runService.RenderStepped:Connect(function(delta)
 						if store.hand.toolType ~= 'bow' then return end
 						if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then return end
-						local plr = entitylib.EntityMouse({ Part = 'RootPart' })
+						local plr = entitylib.EntityMouse({ Part = 'RootPart', FOV = FOV.Value })
 						if plr then
 							local screen, vis = gameCamera:WorldToViewportPoint(plr.RootPart.Position)
 							if vis and isrbxactive() then
-								local move = (Vector2.new(screen.X, screen.Y) - inputService:GetMouseLocation()) * ((100 - Smoothness.Value) * delta / 3)
+								local move = (Vector2.new(screen.X, screen.Y) - inputService:GetMouseLocation()) * (delta / 3)
 								mousemoverel(move.X, Vertical.Enabled and move.Y or 0)
 							end
 						end
@@ -2947,7 +2949,7 @@ end)
 		})
 
 		Prediction = ProjectileAimbot:CreateSlider({ Name = 'Prediction', Min = 0.1, Max = 2, Default = 1, Decimal = 10 })
-		Smoothness = ProjectileAimbot:CreateSlider({ Name = 'Smoothness', Min = 1, Max = 100, Default = 70 })
+		FOV = ProjectileAimbot:CreateSlider({ Name = 'FOV', Min = 1, Max = 1000, Default = 1000 })
 		Vertical = ProjectileAimbot:CreateToggle({ Name = 'Vertical aim' })
 		AutoCharge = ProjectileAimbot:CreateToggle({ Name = 'Auto Charge', Default = false, Tooltip = 'Fully charges your bow for more damage' })
 	end)
