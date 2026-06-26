@@ -457,24 +457,30 @@ entitylib.EntityPosition = function(params)
 	return entitylib.AllPosition(params)[1]
 end
 
--- Closest-to-cursor target selector (replaces VapeV4 EntityMouse).
+-- Target selector (replaces VapeV4 EntityMouse).
 -- Players-only (NPCs/entities filtered out), on-screen (camera visibility test,
--- no wallcheck). FOV limits targets to those within FOV pixels of the cursor.
--- Returns the entity nearest the mouse within FOV, or nil.
+-- no wallcheck). Filters by Range (3D studs) and FOV (screen pixels), then picks
+-- the nearest player by 3D distance. Returns that entity, or nil.
 entitylib.EntityMouse = function(params)
 	if not entitylib.isAlive then return nil end
+	local selfpos = entitylib.character.RootPart.Position
 	local mousePos = inputService:GetMouseLocation()
 	local fov = (params and params.FOV) or math.huge
-	local best, bestMag = nil, math.huge
-	local candidates = entitylib.AllPosition({ Range = 9999, Sort = sortmethods.Distance })
+	local range = (params and params.Range) or math.huge
+	local best, bestDist = nil, math.huge
+	local candidates = entitylib.AllPosition({ Range = range, Sort = sortmethods.Distance })
 	for _, v in candidates do
 		-- players only: skip anything that isn't a real player (NPCs, mobs, entities)
 		if v.Player then
 			local screen, vis = gameCamera:WorldToViewportPoint(v.RootPart.Position)
 			if vis then
-				local mag = (Vector2.new(screen.X, screen.Y) - mousePos).Magnitude
-				if mag <= fov and mag < bestMag then
-					bestMag, best = mag, v
+				local screenDist = (Vector2.new(screen.X, screen.Y) - mousePos).Magnitude
+				if screenDist <= fov then
+					-- pick nearest by 3D world distance
+					local worldDist = (v.RootPart.Position - selfpos).Magnitude
+					if worldDist < bestDist then
+						bestDist, best = worldDist, v
+					end
 				end
 			end
 		end
@@ -2858,6 +2864,7 @@ end)
 		local ProjectileAimbot
 		local Prediction
 		local FOV
+		local Range
 		local Vertical
 		local AutoCharge
 		local oldLaunch
@@ -2865,8 +2872,8 @@ end)
 		local function doAim(nextLaunch, ...)
 			local self, projmeta, worldmeta, origin, shootpos = ...
 
-			-- players-only, closest-to-cursor, on-screen within FOV (no wallcheck)
-			local plr = entitylib.EntityMouse({ Part = 'RootPart', FOV = FOV.Value })
+			-- players-only, nearest-by-distance, within Range + on-screen within FOV (no wallcheck)
+			local plr = entitylib.EntityMouse({ Part = 'RootPart', Range = Range.Value, FOV = FOV.Value })
 			if not plr or not plr.Character then return nextLaunch(...) end
 
 			-- arrows only: other projectiles permanently rejected (no toggle)
@@ -2932,7 +2939,7 @@ end)
 					ProjectileAimbot:Clean(runService.RenderStepped:Connect(function(delta)
 						if store.hand.toolType ~= 'bow' then return end
 						if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then return end
-						local plr = entitylib.EntityMouse({ Part = 'RootPart', FOV = FOV.Value })
+						local plr = entitylib.EntityMouse({ Part = 'RootPart', Range = Range.Value, FOV = FOV.Value })
 						if plr then
 							local screen, vis = gameCamera:WorldToViewportPoint(plr.RootPart.Position)
 							if vis and isrbxactive() then
