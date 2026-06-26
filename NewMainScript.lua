@@ -453,41 +453,9 @@ run(function()
 		return workspace.Raycast(workspace, origin, (position - origin), ignoreobject)
 	end
 
-entitylib.EntityPosition = function(params)
-	return entitylib.AllPosition(params)[1]
-end
-
--- Target selector (replaces VapeV4 EntityMouse).
--- Players-only (NPCs/entities filtered out), on-screen (camera visibility test,
--- no wallcheck). Filters by Range (3D studs) and FOV (screen pixels), then picks
--- the nearest player by 3D distance. Returns that entity, or nil.
-entitylib.EntityMouse = function(params)
-	if not entitylib.isAlive then return nil end
-	local selfpos = entitylib.character.RootPart.Position
-	local mousePos = inputService:GetMouseLocation()
-	local fov = (params and params.FOV) or math.huge
-	local range = (params and params.Range) or math.huge
-	local best, bestDist = nil, math.huge
-	local candidates = entitylib.AllPosition({ Range = range, Sort = sortmethods.Distance })
-	for _, v in candidates do
-		-- players only: skip anything that isn't a real player (NPCs, mobs, entities)
-		if v.Player then
-			local screen, vis = gameCamera:WorldToViewportPoint(v.RootPart.Position)
-			if vis then
-				local screenDist = (Vector2.new(screen.X, screen.Y) - mousePos).Magnitude
-				if screenDist <= fov then
-					-- pick nearest by 3D world distance
-					local worldDist = (v.RootPart.Position - selfpos).Magnitude
-					if worldDist < bestDist then
-						bestDist, best = worldDist, v
-					end
-				end
-			end
-		end
+	entitylib.EntityPosition = function(params)
+		return entitylib.AllPosition(params)[1]
 	end
-	return best
-end
-
 
 	local sortmethods = {
 		Damage = function(a, b)
@@ -509,57 +477,6 @@ end
 			return angleA < angleB
 		end
 	}
-
-	-- Projectile trajectory solver. Iterates time steps, advancing the projectile
-	-- under its own gravity and the target under its gravity (with hip-height rest
-	-- offset and an optional jump impulse), and returns the predicted point in space
-	-- the projectile should be aimed at so it meets the moving target. Returns nil
-	-- if no intercept is found within the iteration cap.
-	-- Args: origin, projectileSpeed, projectileGravity, targetPos, targetVel,
-	--       targetGravity, targetHipHeight, jumpVelocity
-	local function solveTrajectory(origin, projSpeed, projGravity, targetPos, targetVel, targetGravity, hipHeight, jumpVel)
-		projSpeed = math.max(projSpeed, 0.01)
-		-- distance to target, capped so far shots don't loop forever
-		local dist = (targetPos - origin).Magnitude
-		local dir = (targetPos - origin).Unit
-		-- initial launch direction guess: arc slightly above direct line
-		local bestAimPos, bestDist = nil, math.huge
-		local g = projGravity
-		-- iterate candidate flight times
-		for t = 0.05, 3, 0.05 do
-			-- where the target will be at time t (accounting for its gravity + velocity)
-			local fall = 0.5 * (targetGravity or 0) * t * t
-			local jump = jumpVel and (jumpVel * t - 0.5 * (targetGravity or workspace.Gravity) * t * t) or 0
-			local futureTarget = targetPos + targetVel * t - Vector3.new(0, math.max(fall, 0) - (hipHeight or 0), 0)
-			if jumpVel then
-				futureTarget = targetPos + targetVel * t - Vector3.new(0, 0.5 * (targetGravity or workspace.Gravity) * t * t, 0)
-			end
-			-- solve for the launch angle that lands the projectile at futureTarget in time t
-			local toTarget = futureTarget - origin
-			local flat = Vector3.new(toTarget.X, 0, toTarget.Z)
-			local flatDist = flat.Magnitude
-			local deltaY = toTarget.Y
-			-- displacement under gravity: deltaY = vSin*t - 0.5*g*t^2  => vSin = (deltaY + 0.5*g*t^2)/t
-			local vSin = (deltaY + 0.5 * g * t * t) / t
-			local vCos = math.sqrt(math.max(projSpeed * projSpeed - vSin * vSin, 0))
-			if flatDist > 0.01 and vCos > 0 then
-				local flatDir = flat.Unit
-				-- reconstructed aim point: the direction we'd fire
-				local aimDir = (flatDir * vCos + Vector3.new(0, vSin, 0)).Unit
-				-- simulate projectile to time t and check distance to futureTarget
-				local projPos = origin + aimDir * projSpeed * t - Vector3.new(0, 0.5 * g * t * t, 0)
-				local miss = (projPos - futureTarget).Magnitude
-				if miss < bestDist then
-					bestDist, bestAimPos = miss, origin + aimDir * (projSpeed * t)
-				end
-				if miss < 1 then
-					-- close enough — lock in this solution
-					return origin + aimDir * (projSpeed * t)
-				end
-			end
-		end
-		return bestAimPos
-	end
 
 	local inventoryEvent = Instance.new('BindableEvent')
 	local swingEvent = Instance.new('BindableEvent')
@@ -643,15 +560,7 @@ bedwars = setmetatable({
     SoundManager = require(replicatedStorage['rbxts_include']['node_modules']['@easy-games']['game-core'].out).SoundManager,
     Store = require(lplr.PlayerScripts.TS.ui.store).ClientStore,
     UILayers = require(replicatedStorage['rbxts_include']['node_modules']['@easy-games']['game-core'].out).UILayers,
-    CombatConstant = combatConstant,
-    ProjectileMeta = require(replicatedStorage.TS.projectile['projectile-meta']).ProjectileMeta,
-    BowConstantsTable = (function()
-        local ok, tbl = pcall(function()
-            return debug.getupvalue(KnitClient.Controllers.ProjectileController.enableBeam, 8)
-        end)
-        if ok and type(tbl) == 'table' and tbl.RelX then return tbl end
-        return { RelX = 0, RelY = 0, RelZ = 0 }
-    end)(),
+    CombatConstant = combatConstant
 }, {
     __index = function(self, ind)
         rawset(self, ind, KnitClient.Controllers[ind])
@@ -664,65 +573,6 @@ bedwars.getIcon = function(params, _)
     if meta and meta.image then return meta.image end
     return ''
 end
-
--- Priority-ordered method hook framework (ported from VapeV4 createMethodHook).
--- Lets modules chain overrides of a controller method; each hook callback
--- receives a nextLaunch/nextHook passthrough plus the original args.
-local function createMethodHook(object, method)
-    local original = object[method]
-    local hooks, order = {}, 0
-    local wrapper
-
-    local function sync()
-        if #hooks > 0 then
-            object[method] = wrapper
-        elseif object[method] == wrapper then
-            object[method] = original
-        end
-    end
-
-    wrapper = function(...)
-        local index = 0
-        local function nextHook(...)
-            index += 1
-            local hook = hooks[index]
-            if hook then
-                return hook.Callback(nextHook, ...)
-            end
-            return original(...)
-        end
-        return nextHook(...)
-    end
-
-    return {
-        Add = function(_, id, priority, callback)
-            for i = #hooks, 1, -1 do
-                if hooks[i].Id == id then table.remove(hooks, i) end
-            end
-            order += 1
-            local entry = { Id = id, Priority = priority or 100, Order = order, Callback = callback }
-            table.insert(hooks, entry)
-            table.sort(hooks, function(a, b)
-                return a.Priority == b.Priority and a.Order < b.Order or a.Priority < b.Priority
-            end)
-            sync()
-            return function()
-                for i = #hooks, 1, -1 do
-                    if hooks[i] == entry then table.remove(hooks, i) end
-                end
-                sync()
-            end
-        end,
-        Destroy = function() table.clear(hooks); sync() end,
-    }
-end
-
--- Wrap ProjectileController.calculateImportantLaunchValues so modules (e.g. ProjectileAimbot)
--- can intercept the launch moment and override the computed trajectory.
-bedwars.ProjectileLaunchHook = createMethodHook(bedwars.ProjectileController, 'calculateImportantLaunchValues')
-table.insert(vapelite.Connections, {Disconnect = function()
-    pcall(function() bedwars.ProjectileLaunchHook:Destroy() end)
-end})
 local cache = {}
 		local ZapNetworking = require(lplr.PlayerScripts.TS.lib.network)		
 
@@ -2853,112 +2703,6 @@ end)
 			end,
 			Tooltip = 'Automatically crossbow macro\'s'
 		})
-	end)
-
-	-- ProjectileAimbot: silently redirects each arrow's launch trajectory onto the
-	-- predicted position of the closest player to your cursor (the accuracy layer),
-	-- AND moves your cursor toward them while you hold a bow (the aim-assist feel).
-	-- Players-only, closest-to-cursor, on-screen. No FOV, no wallcheck, no blacklist,
-	-- no target-mode dropdown. Arrows only (other projectiles permanently off).
-	run(function()
-		local ProjectileAimbot
-		local Prediction
-		local FOV
-		local Range
-		local Vertical
-		local AutoCharge
-		local oldLaunch
-
-		local function doAim(nextLaunch, ...)
-			local self, projmeta, worldmeta, origin, shootpos = ...
-
-			-- players-only, nearest-by-distance, within Range + on-screen within FOV (no wallcheck)
-			local plr = entitylib.EntityMouse({ Part = 'RootPart', Range = Range.Value, FOV = FOV.Value })
-			if not plr or not plr.Character then return nextLaunch(...) end
-
-			-- arrows only: other projectiles permanently rejected (no toggle)
-			if not projmeta.projectile or not projmeta.projectile:find('arrow') then
-				return nextLaunch(...)
-			end
-
-			local pos = shootpos or self:getLaunchPosition(origin)
-			if not pos then return nextLaunch(...) end
-
-			local meta = projmeta:getProjectileMeta()
-			local lifetime = meta.lifetimeSec or 3
-			local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
-			local projSpeed = meta.launchVelocity or 100
-			local offsetpos = pos + projmeta.fromPositionOffset
-
-			-- target gravity modifiers (balloons / owl)
-			local balloons = plr.Character:GetAttribute('InflatedBalloons')
-			local playerGravity = workspace.Gravity
-			if balloons and balloons > 0 then
-				playerGravity = (workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975)))
-			end
-			if plr.Character.PrimaryPart and plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
-				playerGravity = 6
-			end
-			if plr.Player and plr.Player:GetAttribute('IsOwlTarget') then
-				for _, owl in collectionService:GetTagged('Owl') do
-					if owl:GetAttribute('Target') == plr.Player.UserId and owl:GetAttribute('Status') == 2 then
-						playerGravity = 0
-					end
-				end
-			end
-
-			local targetpos = plr.RootPart.Position
-			local bow = bedwars.BowConstantsTable
-			local newlook = CFrame.new(offsetpos, targetpos) * CFrame.new(bow.RelX or 0, bow.RelY or 0, bow.RelZ or 0)
-			local newv = plr.RootPart.Velocity:Lerp(plr.RootPart.Velocity, 0.5)
-			local ps = math.min(lplr:GetNetworkPing(), 0.5)
-			if ps > 0.06 then
-				targetpos = targetpos + (newv * ps)
-			end
-
-			local calc = solveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, newv, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil)
-			if calc then
-				return {
-					initialVelocity = CFrame.new(newlook.Position, calc).LookVector * (projSpeed * (AutoCharge.Enabled and 1 or projmeta.velocityMultiplier)),
-					positionFrom = offsetpos,
-					deltaT = lifetime,
-					gravitationalAcceleration = gravity,
-					drawDurationSeconds = AutoCharge.Enabled and 5 or projmeta.drawDurationSeconds,
-				}
-			end
-			return nextLaunch(...)
-		end
-
-		ProjectileAimbot = vapelite:CreateModule({
-			Name = 'ProjectileAimbot',
-			Function = function(callback)
-				if callback then
-					-- accuracy layer: intercept each launch and redirect the trajectory
-					oldLaunch = bedwars.ProjectileLaunchHook:Add('ProjectileAimbot', 100, doAim)
-					-- feel layer: move the cursor toward the target while holding a bow
-					ProjectileAimbot:Clean(runService.RenderStepped:Connect(function(delta)
-						if store.hand.toolType ~= 'bow' then return end
-						if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then return end
-						local plr = entitylib.EntityMouse({ Part = 'RootPart', Range = Range.Value, FOV = FOV.Value })
-						if plr then
-							local screen, vis = gameCamera:WorldToViewportPoint(plr.RootPart.Position)
-							if vis and isrbxactive() then
-								local move = (Vector2.new(screen.X, screen.Y) - inputService:GetMouseLocation()) * (delta / 3)
-								mousemoverel(move.X, Vertical.Enabled and move.Y or 0)
-							end
-						end
-					end))
-				else
-					if oldLaunch then oldLaunch(); oldLaunch = nil end
-				end
-			end,
-			Tooltip = 'Aims your projectiles at players'
-		})
-
-		Prediction = ProjectileAimbot:CreateSlider({ Name = 'Prediction', Min = 0.1, Max = 2, Default = 1, Decimal = 10 })
-		FOV = ProjectileAimbot:CreateSlider({ Name = 'FOV', Min = 1, Max = 1000, Default = 1000 })
-		Vertical = ProjectileAimbot:CreateToggle({ Name = 'Vertical aim' })
-		AutoCharge = ProjectileAimbot:CreateToggle({ Name = 'Auto Charge', Default = false, Tooltip = 'Fully charges your bow for more damage' })
 	end)
 
 end)
