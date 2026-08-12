@@ -1776,6 +1776,22 @@ run(function()
         AttackRemote = Client:Get("SwordHit")
     end)
 
+    local oldSwing
+    local lastKaSwing = 0
+
+    -- V4 Feature: Reset the game's internal cooldown so the server always accepts our hit
+    local function resetSwordCooldown()
+        if bedwars.SwordController then
+            bedwars.SwordController.lastAttack = 0
+            bedwars.SwordController.lastSwing = 0
+            if bedwars.SwordController.lastChargedAttackTimeMap then
+                for weaponName, _ in pairs(bedwars.SwordController.lastChargedAttackTimeMap) do
+                    bedwars.SwordController.lastChargedAttackTimeMap[weaponName] = 0
+                end
+            end
+        end
+    end
+
     local function doKillauraAttack()
         if AttackCheck and AttackCheck.Enabled then
             local stunTime = lplr.Character and lplr.Character:GetAttribute('StunnedUntilTime')
@@ -1818,19 +1834,32 @@ run(function()
         local actualRoot = v.Character.PrimaryPart
         if not actualRoot then return end
 
-        -- Send the attack using the game's built-in timing to avoid desync
+        -- V4 Feature: Prevent double-sending packets if the game fires the hook twice in one frame
+        if (tick() - lastKaSwing) < 0.1 then return end
+        lastKaSwing = tick()
+
+        -- Reset the cooldown BEFORE sending the packet so the server accepts it
+        resetSwordCooldown()
+
+        -- V4 / Vape Lite Reach Bypass
+        local targetPos = actualRoot.Position
+        local camOrigin = gameCamera.CFrame.Position
+        local dir = CFrame.lookAt(camOrigin, targetPos).LookVector
+        local spoofedPos = camOrigin + dir * math.max((targetPos - camOrigin).Magnitude - 14.399, 0)
+
         AttackRemote:SendToServer({
             weapon = sword.tool,
             chargedAttack = {chargeRatio = 0},
+            -- Use the game's native variable, which we just forced to a safe value
             lastSwingServerTimeDelta = bedwars.SwordController.lastSwingServerTimeDelta or 0.3,
             entityInstance = v.Character,
             validate = {
                 raycast = {
-                    cameraPosition = {value = gameCamera.CFrame.Position},
-                    cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, actualRoot.Position).LookVector}
+                    cameraPosition = {value = camOrigin},
+                    cursorDirection = {value = dir}
                 },
-                targetPosition = {value = actualRoot.Position},
-                selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, actualRoot.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
+                targetPosition = {value = targetPos},
+                selfPosition = {value = spoofedPos}
             }
         })
 
@@ -1842,12 +1871,20 @@ run(function()
         Name = 'Killaura',
         Function = function(callback)
             if callback then
-                -- Listen for the swing event instead of double-hooking
-                Killaura:Clean(swingEvent.Event:Connect(function()
+                -- Reset cooldown instantly when KA is turned on
+                resetSwordCooldown()
+                
+                oldSwing = bedwars.SwordController.swingSwordAtMouse
+                bedwars.SwordController.swingSwordAtMouse = function(...)
                     doKillauraAttack()
-                end))
+                    return oldSwing(...)
+                end
             else
                 store.KillauraTarget = nil
+                if oldSwing then
+                    bedwars.SwordController.swingSwordAtMouse = oldSwing
+                    oldSwing = nil
+                end
             end
         end,
         Tooltip = 'Attack players around you\nwithout aiming at them.'
