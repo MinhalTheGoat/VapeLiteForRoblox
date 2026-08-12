@@ -1776,10 +1776,7 @@ run(function()
         AttackRemote = Client:Get("SwordHit")
     end)
 
-    local oldSwing
-    local oldSendRequest
     local function doKillauraAttack()
-        -- AttackCheck (stun / kit ability) gate
         if AttackCheck and AttackCheck.Enabled then
             local stunTime = lplr.Character and lplr.Character:GetAttribute('StunnedUntilTime')
             if stunTime and stunTime > workspace:GetServerTimeNow() then
@@ -1818,53 +1815,39 @@ run(function()
         if entitylib.Wallcheck(lplr.Character.HumanoidRootPart.Position, v.RootPart.Position) then return end
 
         store.KillauraTarget = v
+        local actualRoot = v.Character.PrimaryPart
+        if not actualRoot then return end
+
+        -- Send the attack using the game's built-in timing to avoid desync
+        AttackRemote:SendToServer({
+            weapon = sword.tool,
+            chargedAttack = {chargeRatio = 0},
+            lastSwingServerTimeDelta = bedwars.SwordController.lastSwingServerTimeDelta or 0.3,
+            entityInstance = v.Character,
+            validate = {
+                raycast = {
+                    cameraPosition = {value = gameCamera.CFrame.Position},
+                    cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, actualRoot.Position).LookVector}
+                },
+                targetPosition = {value = actualRoot.Position},
+                selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, actualRoot.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
+            }
+        })
+
+        store.attackReach = (delta.Magnitude * 100) // 1 / 100
+        store.attackReachUpdate = tick() + 1
     end
 
     Killaura = vapelite:CreateModule({
         Name = 'Killaura',
         Function = function(callback)
             if callback then
-                -- 1. Hook the swing to FIND the target
-                oldSwing = bedwars.SwordController.swingSwordAtMouse
-                bedwars.SwordController.swingSwordAtMouse = function(...)
+                -- Listen for the swing event instead of double-hooking
+                Killaura:Clean(swingEvent.Event:Connect(function()
                     doKillauraAttack()
-                    return oldSwing(...)
-                end
-
-                -- 2. Hook the send function to REDIRECT the packet to the Killaura target
-                oldSendRequest = bedwars.SwordController.sendServerRequest
-                bedwars.SwordController.sendServerRequest = function(self, ...)
-                    local args = {...}
-                    
-                    -- If we have a valid KA target, redirect the attack to them
-                    if store.KillauraTarget and store.KillauraTarget.Character and store.KillauraTarget.Character.PrimaryPart then
-                        local targetRoot = store.KillauraTarget.Character.PrimaryPart
-                        local selfrootpos = entitylib.character.RootPart.Position
-                        local delta = (targetRoot.Position - selfrootpos)
-                        
-                        -- Forge the validate packet (Grandad's reach bypass)
-                        if args[1] and args[1].validate then
-                            args[1].validate.raycast = {
-                                cameraPosition = {value = gameCamera.CFrame.Position},
-                                cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, targetRoot.Position).LookVector}
-                            }
-                            args[1].validate.targetPosition = {value = targetRoot.Position}
-                            args[1].validate.selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, targetRoot.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
-                        end
-                    end
-                    
-                    return oldSendRequest(self, table.unpack(args))
-                end
+                end))
             else
                 store.KillauraTarget = nil
-                if oldSwing then
-                    bedwars.SwordController.swingSwordAtMouse = oldSwing
-                    oldSwing = nil
-                end
-                if oldSendRequest then
-                    bedwars.SwordController.sendServerRequest = oldSendRequest
-                    oldSendRequest = nil
-                end
             end
         end,
         Tooltip = 'Attack players around you\nwithout aiming at them.'
