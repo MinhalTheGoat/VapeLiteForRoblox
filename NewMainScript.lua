@@ -1830,8 +1830,11 @@ run(function()
 
         local _serverNow = workspace:GetServerTimeNow()
         lastSwingServerTimeDelta = _serverNow - lastSwingServerTime
+		-- Force the server to think we waited at least 0.3 seconds
+		if lastSwingServerTimeDelta < 0.3 then
+		    lastSwingServerTimeDelta = 0.3
+		end
         lastSwingServerTime = _serverNow
-        bedwars.SwordController.lastAttack = _serverNow
 
         -- grandad's selfPosition reach-bypass: report a position closer to the
         -- target so the server never sees a distance above ~14.4 studs, letting
@@ -1839,7 +1842,7 @@ run(function()
         AttackRemote:SendToServer({
             weapon = sword.tool,
             chargedAttack = {chargeRatio = 0},
-            lastSwingServerTimeDelta = math.clamp(lastSwingServerTimeDelta, 0.2999, 0.8),
+            lastSwingServerTimeDelta = math.clamp(lastSwingServerTimeDelta, 0.2, 0.8),
             entityInstance = v.Character,
             validate = {
                 raycast = {
