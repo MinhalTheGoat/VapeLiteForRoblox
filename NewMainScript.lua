@@ -360,6 +360,32 @@ run(function()
 		})
 	end)
 
+	run(function()
+		local ViewHistory
+
+		ViewHistory = vapelite:CreateModule({
+			Name = 'ViewHistory',
+			Function = function(callback)
+				if callback then
+					local MatchHistoryController = KnitClient.Controllers.MatchHistoryController
+					local AppController = require(replicatedStorage['rbxts_include']['node_modules']['@easy-games']['game-core'].out.client.controllers['app-controller']).AppController
+					local MatchHistoryApp = require(lplr.PlayerScripts.TS.controllers.global["match-history"].ui["match-history-moderation-app"]).MatchHistoryModerationApp
+
+					MatchHistoryController:requestMatchHistory(lplr.Name):andThen(function(Data)
+						if Data then
+							AppController:openApp({
+								app = MatchHistoryApp,
+								appId = "MatchHistoryApp",
+							}, Data)
+						end
+					end)
+				end
+			end,
+			Tooltip = 'Opens the match history app for yourself.'
+		})
+	end)
+		
+
 	if game.PlaceId == 6872265039 then return end
 
 	local store = {
