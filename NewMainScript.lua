@@ -1770,17 +1770,14 @@ run(function()
     local Angle
     local kitChecks
     local AttackCheck
-    local lastSwingServerTime = 0
-    local lastSwingServerTimeDelta = 0
     local Client = require(replicatedStorage.TS.remotes).default.Client
     local AttackRemote = {SendToServer = function() end}
     task.spawn(function()
         AttackRemote = Client:Get("SwordHit")
     end)
 
-    -- grandad-style 1:1: re-hook swingSwordAtMouse so Killaura fires exactly
-    -- once per real swing. No loop, no UpdateRate, no Swing time throttle.
     local oldSwing
+    local oldSendRequest
     local function doKillauraAttack()
         -- AttackCheck (stun / kit ability) gate
         if AttackCheck and AttackCheck.Enabled then
@@ -1799,7 +1796,6 @@ run(function()
             end
         end
 
-        -- sword must be equipped & swung recently (same gate as aim assist)
         if store.hand.toolType ~= 'sword' then return end
         local sword = store.tools.sword
         if not sword or not sword.tool then return end
@@ -1812,7 +1808,6 @@ run(function()
         local localfacing = entitylib.character.RootPart.CFrame.LookVector
         local delta = (v.RootPart.Position - selfrootpos)
 
-        -- grandad-style body-facing angle check (horizontal cone)
         local horiz = delta * Vector3.new(1, 0, 1)
         local angle = math.huge
         if horiz.Magnitude > 0.01 then
@@ -1820,58 +1815,55 @@ run(function()
         end
         if angle > (math.rad(Angle.Value) / 2) then return end
 
-        -- wallcheck (kept; grandad's angle check has no built-in LOS)
         if entitylib.Wallcheck(lplr.Character.HumanoidRootPart.Position, v.RootPart.Position) then return end
 
         store.KillauraTarget = v
-
-        local actualRoot = v.Character.PrimaryPart
-        if not actualRoot then return end
-
-        local _serverNow = workspace:GetServerTimeNow()
-        lastSwingServerTimeDelta = _serverNow - lastSwingServerTime
-		-- Force the server to think we waited at least 0.3 seconds
-		if lastSwingServerTimeDelta < 0.3 then
-		    lastSwingServerTimeDelta = 0.3
-		end
-        lastSwingServerTime = _serverNow
-
-        -- grandad's selfPosition reach-bypass: report a position closer to the
-        -- target so the server never sees a distance above ~14.4 studs, letting
-        -- Killaura reach the full Attack range slider value WITHOUT Reach enabled.
-        AttackRemote:SendToServer({
-            weapon = sword.tool,
-            chargedAttack = {chargeRatio = 0},
-            lastSwingServerTimeDelta = math.clamp(lastSwingServerTimeDelta, 0.2, 0.8),
-            entityInstance = v.Character,
-            validate = {
-                raycast = {
-                    cameraPosition = {value = gameCamera.CFrame.Position},
-                    cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, actualRoot.Position).LookVector}
-                },
-                targetPosition = {value = actualRoot.Position},
-                selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, actualRoot.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
-            }
-        })
-
-        store.attackReach = (delta.Magnitude * 100) // 1 / 100
-        store.attackReachUpdate = tick() + 1
     end
 
     Killaura = vapelite:CreateModule({
         Name = 'Killaura',
         Function = function(callback)
             if callback then
+                -- 1. Hook the swing to FIND the target
                 oldSwing = bedwars.SwordController.swingSwordAtMouse
                 bedwars.SwordController.swingSwordAtMouse = function(...)
                     doKillauraAttack()
                     return oldSwing(...)
+                end
+
+                -- 2. Hook the send function to REDIRECT the packet to the Killaura target
+                oldSendRequest = bedwars.SwordController.sendServerRequest
+                bedwars.SwordController.sendServerRequest = function(self, ...)
+                    local args = {...}
+                    
+                    -- If we have a valid KA target, redirect the attack to them
+                    if store.KillauraTarget and store.KillauraTarget.Character and store.KillauraTarget.Character.PrimaryPart then
+                        local targetRoot = store.KillauraTarget.Character.PrimaryPart
+                        local selfrootpos = entitylib.character.RootPart.Position
+                        local delta = (targetRoot.Position - selfrootpos)
+                        
+                        -- Forge the validate packet (Grandad's reach bypass)
+                        if args[1] and args[1].validate then
+                            args[1].validate.raycast = {
+                                cameraPosition = {value = gameCamera.CFrame.Position},
+                                cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, targetRoot.Position).LookVector}
+                            }
+                            args[1].validate.targetPosition = {value = targetRoot.Position}
+                            args[1].validate.selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, targetRoot.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
+                        end
+                    end
+                    
+                    return oldSendRequest(self, table.unpack(args))
                 end
             else
                 store.KillauraTarget = nil
                 if oldSwing then
                     bedwars.SwordController.swingSwordAtMouse = oldSwing
                     oldSwing = nil
+                end
+                if oldSendRequest then
+                    bedwars.SwordController.sendServerRequest = oldSendRequest
+                    oldSendRequest = nil
                 end
             end
         end,
