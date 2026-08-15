@@ -1877,28 +1877,48 @@ run(function()
         store.attackReachUpdate = tick() + 1
     end
 
-    Killaura = vapelite:CreateModule({
-        Name = 'Killaura',
-        Function = function(callback)
-            if callback then
-                -- Reset cooldown instantly when KA is turned on
-                resetSwordCooldown()
+   Killaura = vapelite:CreateModule({
+    Name = 'Killaura',
+    Function = function(callback)
+        if callback then
+            Killaura:Clean(swingEvent.Event:Connect(function()
+                local plr = getEntitiesNear(AttackRange.Value)
+                if not plr then return end
+                if store.hand.toolType ~= 'sword' then return end
+                if not bedwars.SwordController:canSee({getInstance = function() return plr.Character end}) then return end
                 
-                oldSwing = bedwars.SwordController.swingSwordAtMouse
-                bedwars.SwordController.swingSwordAtMouse = function(...)
-                    doKillauraAttack()
-                    return oldSwing(...)
-                end
-            else
-                store.KillauraTarget = nil
-                if oldSwing then
-                    bedwars.SwordController.swingSwordAtMouse = oldSwing
-                    oldSwing = nil
-                end
-            end
-        end,
-        Tooltip = 'Attack players around you\nwithout aiming at them.'
-    })
+                local selfrootpos = entitylib.character.RootPart.Position
+                local localfacing = entitylib.character.RootPart.CFrame.LookVector
+                local delta = (plr.RootPart.Position - selfrootpos)
+                local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
+                if angle > (math.rad(Angle.Value) / 2) then return end
+                
+                -- Let the game's natural swing timing handle cooldown validation
+                -- The server will reject if swingDelta is too small (which is what we want for 1:1 hitreg)
+                local swingDelta = workspace:GetServerTimeNow() - bedwars.SwordController.lastSwingServerTime
+                
+                local camOrigin = gameCamera.CFrame.Position
+                local dir = CFrame.lookAt(camOrigin, plr.RootPart.Position).LookVector
+                
+                AttackRemote:SendToServer({
+                    weapon = store.hand.tool,
+                    chargedAttack = {chargeRatio = 0},
+                    lastSwingServerTimeDelta = swingDelta,
+                    entityInstance = plr.Character,
+                    validate = {
+                        raycast = {
+                            cameraPosition = {value = camOrigin},
+                            cursorDirection = {value = dir}
+                        },
+                        targetPosition = {value = plr.RootPart.Position},
+                        selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, plr.RootPart.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
+                    }
+                })
+            end))
+        end
+    end,
+    Tooltip = 'Attack players around you without aiming at them.'
+})
 
     AttackRange = Killaura:CreateSlider({
         Name = 'Attack range', Min = 1, Max = 18, Default = 18,
