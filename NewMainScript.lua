@@ -1875,18 +1875,20 @@ run(function()
                 local plr = getEntitiesNear(AttackRange.Value)
                 if not plr then return end
                 if store.hand.toolType ~= 'sword' then return end
-                if not bedwars.SwordController:canSee({getInstance = function() return plr.Character end}) then return end
                 
                 local selfrootpos = entitylib.character.RootPart.Position
                 local localfacing = entitylib.character.RootPart.CFrame.LookVector
                 local delta = (plr.RootPart.Position - selfrootpos)
-                local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
+                local horiz = delta * Vector3.new(1, 0, 1)
+                if horiz.Magnitude < 0.01 then return end
+                
+                local angle = math.acos(localfacing:Dot(horiz.Unit))
                 if angle > (math.rad(Angle.Value) / 2) then return end
                 
-                -- Let the game's natural swing timing handle cooldown validation
-                -- The server will reject if swingDelta is too small (which is what we want for 1:1 hitreg)
-                local swingDelta = workspace:GetServerTimeNow() - bedwars.SwordController.lastSwingServerTime
+                -- Wallcheck (remove this line if you want to hit through walls)
+                if entitylib.Wallcheck(selfrootpos, plr.RootPart.Position) then return end
                 
+                local swingDelta = workspace:GetServerTimeNow() - bedwars.SwordController.lastSwingServerTime
                 local camOrigin = gameCamera.CFrame.Position
                 local dir = CFrame.lookAt(camOrigin, plr.RootPart.Position).LookVector
                 
