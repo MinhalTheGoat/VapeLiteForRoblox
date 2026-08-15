@@ -512,7 +512,6 @@ run(function()
 	local AttackRemote = {FireServer = function() end}
 	local bedwars = {}
 	local attackRemoteInstance = nil
-	local lastAttackTime = 0
 
 	local function switchItem(tool, delay)
 		for slot, item in store.inventory.hotbar do
@@ -680,34 +679,25 @@ end
 		end)
 
 		Client.Get = function(self, remoteName)
-			local call = OldGet(self, remoteName)
-			if remoteName == attackRemoteName then
-				return {
-					instance = call.instance,
-					SendToServer = function(_, attackTable, ...)
-    local currentTime = tick()
-    
-    -- Simple rate limiter: minimum 0.05s between attacks (20 CPS max)
-    local minAttackInterval = 0.05
-    if currentTime - lastAttackTime < minAttackInterval then
-        return
+    local call = OldGet(self, remoteName)
+    if remoteName == attackRemoteName then
+        return {
+            instance = call.instance,
+            SendToServer = function(_, attackTable, ...)
+                local selfpos = attackTable.validate.selfPosition.value
+                local targetpos = attackTable.validate.targetPosition.value
+                store.attackReach = ((selfpos - targetpos).Magnitude * 100) // 1 / 100
+                store.attackReachUpdate = tick() + 1
+                if Reach.Enabled or HitBoxes.Enabled then
+                    attackTable.validate.raycast = attackTable.validate.raycast or {}
+                    attackTable.validate.selfPosition.value += CFrame.lookAt(selfpos, targetpos).LookVector * math.max((selfpos - targetpos).Magnitude - 14.399, 0)
+                end
+                return call:SendToServer(attackTable, ...)
+            end
+        }
     end
-    lastAttackTime = currentTime
-    
-    local selfpos = attackTable.validate.selfPosition.value
-    local targetpos = attackTable.validate.targetPosition.value
-    store.attackReach = ((selfpos - targetpos).Magnitude * 100) // 1 / 100
-    store.attackReachUpdate = tick() + 1
-    if Reach.Enabled or HitBoxes.Enabled then
-        attackTable.validate.raycast = attackTable.validate.raycast or {}
-        attackTable.validate.selfPosition.value += CFrame.lookAt(selfpos, targetpos).LookVector * math.max((selfpos - targetpos).Magnitude - 14.399, 0)
-    end
-    return call:SendToServer(attackTable, ...)
+    return call
 end
-				}
-			end
-			return call
-		end
 
 		local function getSword()
 			local best, bestSlot, bestDmg = nil, nil, 0
