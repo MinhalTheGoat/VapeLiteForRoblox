@@ -1770,27 +1770,13 @@ run(function()
     local Angle
     local kitChecks
     local AttackCheck
-    local Client = require(replicatedStorage.TS.remotes).default.Client
+
     local AttackRemote = {SendToServer = function() end}
     task.spawn(function()
-        AttackRemote = Client:Get("SwordHit")
+        AttackRemote = bedwars.Client:Get(bedwars.AttackRemote)
     end)
 
     local oldSwing
-    local lastKaSwing = 0
-
-    -- V4 Feature: Reset the game's internal cooldown so the server always accepts our hit
-    local function resetSwordCooldown()
-        if bedwars.SwordController then
-            bedwars.SwordController.lastAttack = 0
-            bedwars.SwordController.lastSwing = 0
-            if bedwars.SwordController.lastChargedAttackTimeMap then
-                for weaponName, _ in pairs(bedwars.SwordController.lastChargedAttackTimeMap) do
-                    bedwars.SwordController.lastChargedAttackTimeMap[weaponName] = 0
-                end
-            end
-        end
-    end
 
     local function doKillauraAttack()
         if AttackCheck and AttackCheck.Enabled then
@@ -1834,14 +1820,6 @@ run(function()
         local actualRoot = v.Character.PrimaryPart
         if not actualRoot then return end
 
-        -- V4 Feature: Prevent double-sending packets if the game fires the hook twice in one frame
-        if (tick() - lastKaSwing) < 0.1 then return end
-        lastKaSwing = tick()
-
-        -- Reset the cooldown BEFORE sending the packet so the server accepts it
-        resetSwordCooldown()
-
-        -- V4 / Vape Lite Reach Bypass
         local targetPos = actualRoot.Position
         local camOrigin = gameCamera.CFrame.Position
         local dir = CFrame.lookAt(camOrigin, targetPos).LookVector
@@ -1850,8 +1828,7 @@ run(function()
         AttackRemote:SendToServer({
             weapon = sword.tool,
             chargedAttack = {chargeRatio = 0},
-            -- Use the game's native variable, which we just forced to a safe value
-            lastSwingServerTimeDelta = bedwars.SwordController.lastSwingServerTimeDelta or 0.3,
+            lastSwingServerTimeDelta = workspace:GetServerTimeNow() - bedwars.SwordController.lastSwingServerTime,
             entityInstance = v.Character,
             validate = {
                 raycast = {
@@ -1867,50 +1844,25 @@ run(function()
         store.attackReachUpdate = tick() + 1
     end
 
-   Killaura = vapelite:CreateModule({
-    Name = 'Killaura',
-    Function = function(callback)
-        if callback then
-            Killaura:Clean(swingEvent.Event:Connect(function()
-                local plr = getEntitiesNear(AttackRange.Value)
-                if not plr then return end
-                if store.hand.toolType ~= 'sword' then return end
-                
-                local selfrootpos = entitylib.character.RootPart.Position
-                local localfacing = entitylib.character.RootPart.CFrame.LookVector
-                local delta = (plr.RootPart.Position - selfrootpos)
-                local horiz = delta * Vector3.new(1, 0, 1)
-                if horiz.Magnitude < 0.01 then return end
-                
-                local angle = math.acos(localfacing:Dot(horiz.Unit))
-                if angle > (math.rad(Angle.Value) / 2) then return end
-                
-                -- Wallcheck (remove this line if you want to hit through walls)
-                if entitylib.Wallcheck(selfrootpos, plr.RootPart.Position) then return end
-                
-                local swingDelta = workspace:GetServerTimeNow() - bedwars.SwordController.lastSwingServerTime
-                local camOrigin = gameCamera.CFrame.Position
-                local dir = CFrame.lookAt(camOrigin, plr.RootPart.Position).LookVector
-                
-                AttackRemote:SendToServer({
-                    weapon = store.hand.tool,
-                    chargedAttack = {chargeRatio = 0},
-                    lastSwingServerTimeDelta = swingDelta,
-                    entityInstance = plr.Character,
-                    validate = {
-                        raycast = {
-                            cameraPosition = {value = camOrigin},
-                            cursorDirection = {value = dir}
-                        },
-                        targetPosition = {value = plr.RootPart.Position},
-                        selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, plr.RootPart.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
-                    }
-                })
-            end))
-        end
-    end,
-    Tooltip = 'Attack players around you without aiming at them.'
-})
+    Killaura = vapelite:CreateModule({
+        Name = 'Killaura',
+        Function = function(callback)
+            if callback then
+                oldSwing = bedwars.SwordController.swingSwordAtMouse
+                bedwars.SwordController.swingSwordAtMouse = function(...)
+                    doKillauraAttack()
+                    return oldSwing(...)
+                end
+            else
+                store.KillauraTarget = nil
+                if oldSwing then
+                    bedwars.SwordController.swingSwordAtMouse = oldSwing
+                    oldSwing = nil
+                end
+            end
+        end,
+        Tooltip = 'Attack players around you\nwithout aiming at them.'
+    })
 
     AttackRange = Killaura:CreateSlider({
         Name = 'Attack range', Min = 1, Max = 18, Default = 18,
