@@ -1779,69 +1779,72 @@ run(function()
     local oldSwing
 
     local function doKillauraAttack()
-        if AttackCheck and AttackCheck.Enabled then
-            local stunTime = lplr.Character and lplr.Character:GetAttribute('StunnedUntilTime')
-            if stunTime and stunTime > workspace:GetServerTimeNow() then
-                store.KillauraTarget = nil
-                return
-            end
-            if kitChecks then
-                for _, check in pairs(kitChecks) do
-                    if check() then
-                        store.KillauraTarget = nil
-                        return
+        local ok, err = pcall(function()
+            if AttackCheck and AttackCheck.Enabled then
+                local stunTime = lplr.Character and lplr.Character:GetAttribute('StunnedUntilTime')
+                if stunTime and stunTime > workspace:GetServerTimeNow() then
+                    store.KillauraTarget = nil
+                    return
+                end
+                if kitChecks then
+                    for _, check in pairs(kitChecks) do
+                        if check() then
+                            store.KillauraTarget = nil
+                            return
+                        end
                     end
                 end
             end
-        end
 
-        if store.hand.toolType ~= 'sword' then return end
-        local sword = store.tools.sword
-        if not sword or not sword.tool then return end
+            if store.hand.toolType ~= 'sword' then return end
+            local sword = store.tools.sword
+            if not sword or not sword.tool then return end
 
-        local plr = getEntitiesNear(AttackRange.Value)
-        if not plr then return end
+            local plr = getEntitiesNear(AttackRange.Value)
+            if not plr then return end
 
-        local v = plr
-        local selfrootpos = entitylib.character.RootPart.Position
-        local localfacing = entitylib.character.RootPart.CFrame.LookVector
-        local delta = (v.RootPart.Position - selfrootpos)
+            local v = plr
+            local selfrootpos = entitylib.character.RootPart.Position
+            local localfacing = entitylib.character.RootPart.CFrame.LookVector
+            local delta = (v.RootPart.Position - selfrootpos)
 
-        local horiz = delta * Vector3.new(1, 0, 1)
-        local angle = math.huge
-        if horiz.Magnitude > 0.01 then
-            angle = math.acos(math.clamp(localfacing:Dot(horiz.Unit), -1, 1))
-        end
-        if angle > (math.rad(Angle.Value) / 2) then return end
+            local horiz = delta * Vector3.new(1, 0, 1)
+            local angle = math.huge
+            if horiz.Magnitude > 0.01 then
+                angle = math.acos(math.clamp(localfacing:Dot(horiz.Unit), -1, 1))
+            end
+            if angle > (math.rad(Angle.Value) / 2) then return end
 
-        if entitylib.Wallcheck(lplr.Character.HumanoidRootPart.Position, v.RootPart.Position) then return end
+            if entitylib.Wallcheck(lplr.Character.HumanoidRootPart.Position, v.RootPart.Position) then return end
 
-        store.KillauraTarget = v
-        local actualRoot = v.Character.PrimaryPart
-        if not actualRoot then return end
+            store.KillauraTarget = v
+            local actualRoot = v.Character.PrimaryPart
+            if not actualRoot then return end
 
-        local targetPos = actualRoot.Position
-        local camOrigin = gameCamera.CFrame.Position
-        local dir = CFrame.lookAt(camOrigin, targetPos).LookVector
-        local spoofedPos = camOrigin + dir * math.max((targetPos - camOrigin).Magnitude - 14.399, 0)
+            local targetPos = actualRoot.Position
+            local camOrigin = gameCamera.CFrame.Position
+            local dir = CFrame.lookAt(camOrigin, targetPos).LookVector
+            local spoofedPos = camOrigin + dir * math.max((targetPos - camOrigin).Magnitude - 14.399, 0)
 
-        AttackRemote:SendToServer({
-            weapon = sword.tool,
-            chargedAttack = {chargeRatio = 0},
-            lastSwingServerTimeDelta = workspace:GetServerTimeNow() - bedwars.SwordController.lastSwingServerTime,
-            entityInstance = v.Character,
-            validate = {
-                raycast = {
-                    cameraPosition = {value = camOrigin},
-                    cursorDirection = {value = dir}
-                },
-                targetPosition = {value = targetPos},
-                selfPosition = {value = spoofedPos}
-            }
-        })
+            AttackRemote:SendToServer({
+                weapon = sword.tool,
+                chargedAttack = {chargeRatio = 0},
+                lastSwingServerTimeDelta = math.clamp(workspace:GetServerTimeNow() - (bedwars.SwordController.lastSwingServerTime or workspace:GetServerTimeNow() - 200), 0.2, 0.8),
+                entityInstance = v.Character,
+                validate = {
+                    raycast = {
+                        cameraPosition = {value = camOrigin},
+                        cursorDirection = {value = dir}
+                    },
+                    targetPosition = {value = targetPos},
+                    selfPosition = {value = spoofedPos}
+                }
+            })
 
-        store.attackReach = (delta.Magnitude * 100) // 1 / 100
-        store.attackReachUpdate = tick() + 1
+            store.attackReach = (delta.Magnitude * 100) // 1 / 100
+            store.attackReachUpdate = tick() + 1
+        end)
+        if not ok then print("Killaura Error:", err) end
     end
 
     Killaura = vapelite:CreateModule({
@@ -1883,7 +1886,6 @@ run(function()
         Function = function(callback) end,
         Default = false
     })
-end)
 
 	run(function()
 		local ESP
