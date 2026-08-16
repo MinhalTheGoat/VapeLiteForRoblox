@@ -360,32 +360,6 @@ run(function()
 		})
 	end)
 
-	run(function()
-		local ViewHistory
-
-		ViewHistory = vapelite:CreateModule({
-			Name = 'ViewHistory',
-			Function = function(callback)
-				if callback then
-					local MatchHistoryController = KnitClient.Controllers.MatchHistoryController
-					local AppController = require(replicatedStorage['rbxts_include']['node_modules']['@easy-games']['game-core'].out.client.controllers['app-controller']).AppController
-					local MatchHistoryApp = require(lplr.PlayerScripts.TS.controllers.global["match-history"].ui["match-history-moderation-app"]).MatchHistoryModerationApp
-
-					MatchHistoryController:requestMatchHistory(lplr.Name):andThen(function(Data)
-						if Data then
-							AppController:openApp({
-								app = MatchHistoryApp,
-								appId = "MatchHistoryApp",
-							}, Data)
-						end
-					end)
-				end
-			end,
-			Tooltip = 'Opens the match history app for yourself.'
-		})
-	end)
-		
-
 	if game.PlaceId == 6872265039 then return end
 
 	local store = {
@@ -512,7 +486,6 @@ run(function()
 	local AttackRemote = {FireServer = function() end}
 	local bedwars = {}
 	local attackRemoteInstance = nil
-	local lastAttackTime = 0
 
 	local function switchItem(tool, delay)
 		for slot, item in store.inventory.hotbar do
@@ -684,25 +657,17 @@ end
 			if remoteName == attackRemoteName then
 				return {
 					instance = call.instance,
-				SendToServer = function(_, attackTable, ...)
-					local currentTime = tick()
-					local maxHitsPerMinute = 280
-					local windowSize = 60
-					local minInterval = 0.05
-					if currentTime - lastAttackTime < minInterval then
-						return
+					SendToServer = function(_, attackTable, ...)
+						local selfpos = attackTable.validate.selfPosition.value
+						local targetpos = attackTable.validate.targetPosition.value
+						store.attackReach = ((selfpos - targetpos).Magnitude * 100) // 1 / 100
+						store.attackReachUpdate = tick() + 1
+						if Reach.Enabled or HitBoxes.Enabled then
+							attackTable.validate.raycast = attackTable.validate.raycast or {}
+							attackTable.validate.selfPosition.value += CFrame.lookAt(selfpos, targetpos).LookVector * math.max((selfpos - targetpos).Magnitude - 14.399, 0)
+						end
+						return call:SendToServer(attackTable, ...)
 					end
-					lastAttackTime = currentTime
-					local selfpos = attackTable.validate.selfPosition.value
-					local targetpos = attackTable.validate.targetPosition.value
-					store.attackReach = ((selfpos - targetpos).Magnitude * 100) // 1 / 100
-					store.attackReachUpdate = tick() + 1
-					if Reach.Enabled or HitBoxes.Enabled then
-						attackTable.validate.raycast = attackTable.validate.raycast or {}
-						attackTable.validate.selfPosition.value += CFrame.lookAt(selfpos, targetpos).LookVector * math.max((selfpos - targetpos).Magnitude - 14.399, 0)
-					end
-					return call:SendToServer(attackTable, ...)
-				end
 				}
 			end
 			return call
@@ -1779,80 +1744,89 @@ run(function()
     local Angle
     local kitChecks
     local AttackCheck
+    local lastSwingServerTime = 0
+    local lastSwingServerTimeDelta = 0
+    local Client = require(replicatedStorage.TS.remotes).default.Client
     local AttackRemote = {SendToServer = function() end}
     task.spawn(function()
-        AttackRemote = bedwars.Client:Get(bedwars.AttackRemote)
+        AttackRemote = Client:Get("SwordHit")
     end)
 
+    -- grandad-style 1:1: re-hook swingSwordAtMouse so Killaura fires exactly
+    -- once per real swing. No loop, no UpdateRate, no Swing time throttle.
     local oldSwing
-
     local function doKillauraAttack()
-        local ok, err = pcall(function()
-            if AttackCheck and AttackCheck.Enabled then
-                local stunTime = lplr.Character and lplr.Character:GetAttribute('StunnedUntilTime')
-                if stunTime and stunTime > workspace:GetServerTimeNow() then
-                    store.KillauraTarget = nil
-                    return
-                end
-                if kitChecks then
-                    for _, check in pairs(kitChecks) do
-                        if check() then
-                            store.KillauraTarget = nil
-                            return
-                        end
+        -- AttackCheck (stun / kit ability) gate
+        if AttackCheck and AttackCheck.Enabled then
+            local stunTime = lplr.Character and lplr.Character:GetAttribute('StunnedUntilTime')
+            if stunTime and stunTime > workspace:GetServerTimeNow() then
+                store.KillauraTarget = nil
+                return
+            end
+            if kitChecks then
+                for _, check in pairs(kitChecks) do
+                    if check() then
+                        store.KillauraTarget = nil
+                        return
                     end
                 end
             end
+        end
 
-            if store.hand.toolType ~= 'sword' then return end
-            local sword = store.tools.sword
-            if not sword or not sword.tool then return end
+        -- sword must be equipped & swung recently (same gate as aim assist)
+        if store.hand.toolType ~= 'sword' then return end
+        local sword = store.tools.sword
+        if not sword or not sword.tool then return end
 
-            local plr = getEntitiesNear(AttackRange.Value)
-            if not plr then return end
+        local plr = getEntitiesNear(AttackRange.Value)
+        if not plr then return end
 
-            local v = plr
-            local selfrootpos = entitylib.character.RootPart.Position
-            local localfacing = entitylib.character.RootPart.CFrame.LookVector
-            local delta = (v.RootPart.Position - selfrootpos)
+        local v = plr
+        local selfrootpos = entitylib.character.RootPart.Position
+        local localfacing = entitylib.character.RootPart.CFrame.LookVector
+        local delta = (v.RootPart.Position - selfrootpos)
 
-            local horiz = delta * Vector3.new(1, 0, 1)
-            local angle = math.huge
-            if horiz.Magnitude > 0.01 then
-                angle = math.acos(math.clamp(localfacing:Dot(horiz.Unit), -1, 1))
-            end
-            if angle > (math.rad(Angle.Value) / 2) then return end
+        -- grandad-style body-facing angle check (horizontal cone)
+        local horiz = delta * Vector3.new(1, 0, 1)
+        local angle = math.huge
+        if horiz.Magnitude > 0.01 then
+            angle = math.acos(math.clamp(localfacing:Dot(horiz.Unit), -1, 1))
+        end
+        if angle > (math.rad(Angle.Value) / 2) then return end
 
-            if entitylib.Wallcheck(lplr.Character.HumanoidRootPart.Position, v.RootPart.Position) then return end
+        -- wallcheck (kept; grandad's angle check has no built-in LOS)
+        if entitylib.Wallcheck(lplr.Character.HumanoidRootPart.Position, v.RootPart.Position) then return end
 
-            store.KillauraTarget = v
-            local actualRoot = v.Character.PrimaryPart
-            if not actualRoot then return end
+        store.KillauraTarget = v
 
-            local targetPos = actualRoot.Position
-            local camOrigin = gameCamera.CFrame.Position
-            local dir = CFrame.lookAt(camOrigin, targetPos).LookVector
-            local spoofedPos = camOrigin + dir * math.max((targetPos - camOrigin).Magnitude - 14.399, 0)
+        local actualRoot = v.Character.PrimaryPart
+        if not actualRoot then return end
 
-            AttackRemote:SendToServer({
-                weapon = sword.tool,
-                chargedAttack = {chargeRatio = 0},
-                lastSwingServerTimeDelta = math.clamp(workspace:GetServerTimeNow() - (bedwars.SwordController.lastSwingServerTime or workspace:GetServerTimeNow() - 200), 0.2, 0.8),
-                entityInstance = v.Character,
-                validate = {
-                    raycast = {
-                        cameraPosition = {value = camOrigin},
-                        cursorDirection = {value = dir}
-                    },
-                    targetPosition = {value = targetPos},
-                    selfPosition = {value = spoofedPos}
-                }
-            })
+        local _serverNow = workspace:GetServerTimeNow()
+        lastSwingServerTimeDelta = _serverNow - lastSwingServerTime
+        lastSwingServerTime = _serverNow
+        bedwars.SwordController.lastAttack = _serverNow
 
-            store.attackReach = (delta.Magnitude * 100) // 1 / 100
-            store.attackReachUpdate = tick() + 1
-        end)
-        if not ok then print("Killaura Error:", err) end
+        -- grandad's selfPosition reach-bypass: report a position closer to the
+        -- target so the server never sees a distance above ~14.4 studs, letting
+        -- Killaura reach the full Attack range slider value WITHOUT Reach enabled.
+        AttackRemote:SendToServer({
+            weapon = sword.tool,
+            chargedAttack = {chargeRatio = 0},
+            lastSwingServerTimeDelta = math.clamp(lastSwingServerTimeDelta, 0.2, 0.8),
+            entityInstance = v.Character,
+            validate = {
+                raycast = {
+                    cameraPosition = {value = gameCamera.CFrame.Position},
+                    cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, actualRoot.Position).LookVector}
+                },
+                targetPosition = {value = actualRoot.Position},
+                selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, actualRoot.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
+            }
+        })
+
+        store.attackReach = (delta.Magnitude * 100) // 1 / 100
+        store.attackReachUpdate = tick() + 1
     end
 
     Killaura = vapelite:CreateModule({
@@ -1861,7 +1835,7 @@ run(function()
             if callback then
                 oldSwing = bedwars.SwordController.swingSwordAtMouse
                 bedwars.SwordController.swingSwordAtMouse = function(...)
-                    pcall(doKillauraAttack)
+                    doKillauraAttack()
                     return oldSwing(...)
                 end
             else
