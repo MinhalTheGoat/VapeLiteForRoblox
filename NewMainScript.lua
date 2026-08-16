@@ -1744,17 +1744,30 @@ run(function()
     local Angle
     local kitChecks
     local AttackCheck
-    local lastSwingServerTime = 0
-    local lastSwingServerTimeDelta = 0
     local Client = require(replicatedStorage.TS.remotes).default.Client
     local AttackRemote = {SendToServer = function() end}
     task.spawn(function()
         AttackRemote = Client:Get("SwordHit")
     end)
 
-    -- grandad-style 1:1: re-hook swingSwordAtMouse so Killaura fires exactly
-    -- once per real swing. No loop, no UpdateRate, no Swing time throttle.
     local oldSwing
+    local lastKaSwing = 0
+
+    -- V4 fix: Reset the game's internal cooldown so the server always accepts our hit.
+    -- Bedwars' new attack remote ghost-swings if lastAttack / lastSwing /
+    -- lastChargedAttackTimeMap are still set from the previous swing.
+    local function resetSwordCooldown()
+        if bedwars.SwordController then
+            bedwars.SwordController.lastAttack = 0
+            bedwars.SwordController.lastSwing = 0
+            if bedwars.SwordController.lastChargedAttackTimeMap then
+                for weaponName, _ in pairs(bedwars.SwordController.lastChargedAttackTimeMap) do
+                    bedwars.SwordController.lastChargedAttackTimeMap[weaponName] = 0
+                end
+            end
+        end
+    end
+
     local function doKillauraAttack()
         -- AttackCheck (stun / kit ability) gate
         if AttackCheck and AttackCheck.Enabled then
@@ -1786,7 +1799,7 @@ run(function()
         local localfacing = entitylib.character.RootPart.CFrame.LookVector
         local delta = (v.RootPart.Position - selfrootpos)
 
-        -- grandad-style body-facing angle check (horizontal cone)
+        -- body-facing angle check (horizontal cone)
         local horiz = delta * Vector3.new(1, 0, 1)
         local angle = math.huge
         if horiz.Magnitude > 0.01 then
@@ -1794,34 +1807,44 @@ run(function()
         end
         if angle > (math.rad(Angle.Value) / 2) then return end
 
-        -- wallcheck (kept; grandad's angle check has no built-in LOS)
+        -- wallcheck
         if entitylib.Wallcheck(lplr.Character.HumanoidRootPart.Position, v.RootPart.Position) then return end
 
         store.KillauraTarget = v
-
         local actualRoot = v.Character.PrimaryPart
         if not actualRoot then return end
 
-        local _serverNow = workspace:GetServerTimeNow()
-        lastSwingServerTimeDelta = _serverNow - lastSwingServerTime
-        lastSwingServerTime = _serverNow
-        bedwars.SwordController.lastAttack = _serverNow
+        -- V4 fix: Prevent double-sending packets if the game fires the hook twice in one frame.
+        -- This was a big contributor to the 300-rate-limit ghost swings.
+        if (tick() - lastKaSwing) < 0.1 then return end
+        lastKaSwing = tick()
 
-        -- grandad's selfPosition reach-bypass: report a position closer to the
-        -- target so the server never sees a distance above ~14.4 studs, letting
-        -- Killaura reach the full Attack range slider value WITHOUT Reach enabled.
+        -- V4 fix: Reset the cooldown BEFORE sending the packet so the server accepts it.
+        resetSwordCooldown()
+
+        -- V4 / Vape Lite Reach Bypass: spoof selfPosition toward the camera along the
+        -- camera->target ray so the server never sees a distance above ~14.4 studs.
+        local targetPos = actualRoot.Position
+        local camOrigin = gameCamera.CFrame.Position
+        local dir = CFrame.lookAt(camOrigin, targetPos).LookVector
+        local spoofedPos = camOrigin + dir * math.max((targetPos - camOrigin).Magnitude - 14.399, 0)
+
         AttackRemote:SendToServer({
             weapon = sword.tool,
             chargedAttack = {chargeRatio = 0},
-            lastSwingServerTimeDelta = math.clamp(lastSwingServerTimeDelta, 0.2, 0.8),
+            -- V4 fix: Use the game's native lastSwingServerTimeDelta (which we just
+            -- reset via resetSwordCooldown). DO NOT math.clamp it to [0.2, 0.8] --
+            -- that forced unrealistic timing values that the new anti-cheat flags
+            -- as ghost swings under the 300 rate-limit system.
+            lastSwingServerTimeDelta = bedwars.SwordController.lastSwingServerTimeDelta or 0.3,
             entityInstance = v.Character,
             validate = {
                 raycast = {
-                    cameraPosition = {value = gameCamera.CFrame.Position},
-                    cursorDirection = {value = CFrame.lookAt(gameCamera.CFrame.Position, actualRoot.Position).LookVector}
+                    cameraPosition = {value = camOrigin},
+                    cursorDirection = {value = dir}
                 },
-                targetPosition = {value = actualRoot.Position},
-                selfPosition = {value = selfrootpos + CFrame.lookAt(selfrootpos, actualRoot.Position).LookVector * math.max(delta.Magnitude - 14.399, 0)}
+                targetPosition = {value = targetPos},
+                selfPosition = {value = spoofedPos}
             }
         })
 
@@ -1833,6 +1856,8 @@ run(function()
         Name = 'Killaura',
         Function = function(callback)
             if callback then
+                -- Reset cooldown instantly when KA is turned on
+                resetSwordCooldown()
                 oldSwing = bedwars.SwordController.swingSwordAtMouse
                 bedwars.SwordController.swingSwordAtMouse = function(...)
                     doKillauraAttack()
