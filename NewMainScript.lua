@@ -1753,21 +1753,6 @@ run(function()
     local oldSwing
     local lastKaSwing = 0
 
-    -- V4 fix: Reset the game's internal cooldown so the server always accepts our hit.
-    -- Bedwars' new attack remote ghost-swings if lastAttack / lastSwing /
-    -- lastChargedAttackTimeMap are still set from the previous swing.
-    local function resetSwordCooldown()
-        if bedwars.SwordController then
-            bedwars.SwordController.lastAttack = 0
-            bedwars.SwordController.lastSwing = 0
-            if bedwars.SwordController.lastChargedAttackTimeMap then
-                for weaponName, _ in pairs(bedwars.SwordController.lastChargedAttackTimeMap) do
-                    bedwars.SwordController.lastChargedAttackTimeMap[weaponName] = 0
-                end
-            end
-        end
-    end
-
     local function doKillauraAttack()
         -- AttackCheck (stun / kit ability) gate
         if AttackCheck and AttackCheck.Enabled then
@@ -1819,9 +1804,6 @@ run(function()
         if (tick() - lastKaSwing) < 0.1 then return end
         lastKaSwing = tick()
 
-        -- V4 fix: Reset the cooldown BEFORE sending the packet so the server accepts it.
-        resetSwordCooldown()
-
         -- V4 / Vape Lite Reach Bypass: spoof selfPosition toward the camera along the
         -- camera->target ray so the server never sees a distance above ~14.4 studs.
         local targetPos = actualRoot.Position
@@ -1832,11 +1814,7 @@ run(function()
         AttackRemote:SendToServer({
             weapon = sword.tool,
             chargedAttack = {chargeRatio = 0},
-            -- V4 fix: Use the game's native lastSwingServerTimeDelta (which we just
-            -- reset via resetSwordCooldown). DO NOT math.clamp it to [0.2, 0.8] --
-            -- that forced unrealistic timing values that the new anti-cheat flags
-            -- as ghost swings under the 300 rate-limit system.
-            lastSwingServerTimeDelta = bedwars.SwordController.lastSwingServerTimeDelta or 0.3,
+            lastSwingServerTimeDelta = bedwars.SwordController.lastSwingServerTimeDelta,
             entityInstance = v.Character,
             validate = {
                 raycast = {
@@ -1856,8 +1834,6 @@ run(function()
         Name = 'Killaura',
         Function = function(callback)
             if callback then
-                -- Reset cooldown instantly when KA is turned on
-                resetSwordCooldown()
                 oldSwing = bedwars.SwordController.swingSwordAtMouse
                 bedwars.SwordController.swingSwordAtMouse = function(...)
                     doKillauraAttack()
